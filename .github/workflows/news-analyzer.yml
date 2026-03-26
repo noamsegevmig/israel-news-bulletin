@@ -67,7 +67,7 @@ jobs:
           HOURS="${{ github.event.inputs.hours }}"
           MAX="${{ github.event.inputs.max_items }}"
           
-          CMD="python news_analyzer.py --style $STYLE --hours $HOURS --max $MAX"
+          CMD="python news_analyzer.py --from-db --style $STYLE --hours $HOURS --max $MAX"
           if [ -n "$CATS" ]; then
             CMD="$CMD --categories $CATS"
           fi
