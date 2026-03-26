@@ -97,6 +97,41 @@ class NewsCollector:
 
         return self.articles
 
+    # מיפוי שמות מקורות — לנקות domain names שגוגל מחזיר
+    SOURCE_NAME_MAP = {
+        'news.walla.co.il': 'וואלה',
+        'www.walla.co.il': 'וואלה',
+        'walla.co.il': 'וואלה',
+        'www.ynet.co.il': 'Ynet',
+        'ynet.co.il': 'Ynet',
+        'ynet': 'Ynet',
+        'www.mako.co.il': 'Mako',
+        'www.kan.org.il': 'כאן 11',
+        'www.israelhayom.co.il': 'ישראל היום',
+        'www.maariv.co.il': 'מעריב',
+        'www.haaretz.co.il': 'הארץ',
+        'www.now14.co.il': 'ערוץ 14',
+        'www.i24news.tv': 'i24',
+        'i24NEWS': 'i24',
+        'www.globes.co.il': 'גלובס',
+        'www.calcalist.co.il': 'כלכליסט',
+        'Calcalist': 'כלכליסט',
+        'www.themarker.com': 'TheMarker',
+        'www.kikar.co.il': 'כיכר השבת',
+        'www.bhol.co.il': 'בחדרי חרדים',
+        'www.kipa.co.il': 'כיפה',
+        'www.sport5.co.il': 'ספורט 5',
+        'www.geektime.co.il': 'גיקטיים',
+        'סרוגים': 'סרוגים',
+        'המחדש': 'המחדש',
+        'מקור ראשון': 'מקור ראשון',
+        'היום': 'ישראל היום',
+    }
+
+    def _normalize_source_name(self, name: str) -> str:
+        """ניקוי שם מקור — המרת domains לשמות קריאים"""
+        return self.SOURCE_NAME_MAP.get(name, name)
+
     def _fetch_feed(self, url: str, timeout: int = 15) -> feedparser.FeedParserDict:
         """שליפת RSS עם timeout"""
         try:
@@ -230,13 +265,14 @@ class NewsCollector:
         is_exclusive = any(kw.lower() in combined_text for kw in config.EXCLUSIVE_KEYWORDS)
 
         url_hash = hashlib.md5(url.encode()).hexdigest()
+        source_name = self._normalize_source_name(feed_info['name'])
 
         return {
             'title': title,
             'summary': summary,
             'url': url,
             'url_hash': url_hash,
-            'source_name': feed_info['name'],
+            'source_name': source_name,
             'source_sector': feed_info.get('sector', 'unknown'),
             'language': feed_info.get('language', 'he'),
             'published_at': published.isoformat(),
@@ -680,9 +716,10 @@ class BulletinGenerator:
         cat_str = ', '.join(categories) if categories else 'כללי'
 
         lines = []
-        lines.append(f"📋 מבזק חדשות — {cat_str}")
-        lines.append(f"⏰ {hours} שעות אחרונות | {len(topics)} ידיעות | {now.strftime('%d/%m/%Y %H:%M')}")
-        lines.append("─" * 50)
+        lines.append(f"# 📋 מבזק חדשות — {cat_str}")
+        lines.append(f"**⏰ {hours} שעות אחרונות | {len(topics)} ידיעות | {now.strftime('%d/%m/%Y %H:%M')}**")
+        lines.append("")
+        lines.append("---")
         lines.append("")
 
         # קבץ לפי קטגוריה
@@ -700,39 +737,95 @@ class BulletinGenerator:
             'tech': '💻 טכנולוגיה', 'general': '📰 כללי',
         }
 
-        for cat, cat_topics in by_cat.items():
+        # סדר קטגוריות קבוע
+        cat_order = ['security', 'politics', 'diplomatic', 'economy', 'stocks',
+                     'haredi', 'arab', 'health', 'legal', 'local',
+                     'culture', 'sports', 'tech', 'general']
+
+        for cat in cat_order:
+            if cat not in by_cat:
+                continue
+            cat_topics = by_cat[cat]
             label = cat_labels.get(cat, f'📌 {cat}')
-            lines.append(f"\n{label}")
+            lines.append(f"## {label}")
             lines.append("")
 
             for t in cat_topics:
+                # נקה את הכותרת משם האתר בסוף (דפוס נפוץ: "כותרת - שם אתר")
+                title = self._clean_title(t['title'], t['sources'])
+                exclusive_mark = " 🔥" if t['is_exclusive'] else ""
+
+                # פרסר זמן פרסום
+                pub_time = ""
+                try:
+                    pub = datetime.fromisoformat(t['published_at'])
+                    pub_time = pub.strftime('%H:%M')
+                except Exception:
+                    pass
+
+                # קישור לידיעה
+                link = t.get('url', '')
+
+                # מקורות
                 sources_str = ', '.join(t['sources'])
-                exclusive_mark = " [בלעדי]" if t['is_exclusive'] else ""
+                num = t['num_sources']
+                sources_display = f"({sources_str})" if num <= 3 else f"({num} מקורות)"
 
                 if style == 'flash':
-                    # שורה אחת
-                    lines.append(f"• {t['title']}{exclusive_mark} ({sources_str})")
+                    time_prefix = f"**{pub_time}** | " if pub_time else ""
+                    if link:
+                        lines.append(f"• {time_prefix}[{title}]({link}){exclusive_mark} {sources_display}")
+                    else:
+                        lines.append(f"• {time_prefix}{title}{exclusive_mark} {sources_display}")
+
                 elif style == 'brief':
-                    lines.append(f"▸ {t['title']}{exclusive_mark}")
+                    time_prefix = f"🕐 {pub_time} | " if pub_time else ""
+                    if link:
+                        lines.append(f"**[{title}]({link})**{exclusive_mark}")
+                    else:
+                        lines.append(f"**{title}**{exclusive_mark}")
                     if t['summary']:
-                        lines.append(f"  {t['summary'][:150]}")
-                    lines.append(f"  — {sources_str}")
-                    lines.append("")
-                else:  # detailed
-                    lines.append(f"▸ {t['title']}{exclusive_mark}")
-                    if t['summary']:
-                        lines.append(f"  {t['summary'][:300]}")
-                    lines.append(f"  מקורות ({t['num_sources']}): {sources_str}")
+                        lines.append(f"{t['summary'][:200]}")
+                    lines.append(f"_{time_prefix}{sources_display}_")
                     lines.append("")
 
-        lines.append("")
-        lines.append("─" * 50)
+                else:  # detailed
+                    time_prefix = f"🕐 {pub_time} | " if pub_time else ""
+                    if link:
+                        lines.append(f"### [{title}]({link}){exclusive_mark}")
+                    else:
+                        lines.append(f"### {title}{exclusive_mark}")
+                    if t['summary']:
+                        lines.append(f"{t['summary'][:400]}")
+                    lines.append(f"_{time_prefix}מקורות ({num}): {sources_str}_")
+                    lines.append("")
+
+            lines.append("")
+
+        lines.append("---")
         all_sources = set()
         for t in topics:
             all_sources.update(t['sources'])
-        lines.append(f"סה\"כ {len(topics)} ידיעות מ-{len(all_sources)} מקורות")
+        lines.append(f"**סה\"כ {len(topics)} ידיעות מ-{len(all_sources)} מקורות**")
 
         return '\n'.join(lines)
+
+    def _clean_title(self, title: str, sources: List[str]) -> str:
+        """ניקוי כותרת — הסרת שם האתר מהסוף"""
+        # הסר דפוסים כמו " - Ynet" או " | גלובס" מסוף הכותרת
+        for source in sources:
+            for sep in [' - ', ' | ', ' – ', ' — ']:
+                # בדיקה case-insensitive
+                for variant in [source, source.lower(), source.upper()]:
+                    suffix = f"{sep}{variant}"
+                    if title.lower().endswith(suffix.lower()):
+                        title = title[:-len(suffix)]
+                        break
+        # הסר גם דפוסים כלליים של " - domain.co.il" או " - שם אתר"
+        title = re.sub(r'\s*[-|–—]\s*\S+\.\S+\.\S+\s*$', '', title)
+        # הסר " - ynet" ודומיו שנשארו
+        title = re.sub(r'\s*[-|–—]\s*(ynet|Ynet|Mako|mako|i24NEWS|Calcalist|N12)\s*$', '', title, flags=re.IGNORECASE)
+        return title.strip()
 
 
 # ============================================================
