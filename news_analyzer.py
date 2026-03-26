@@ -677,12 +677,23 @@ class BulletinGenerator:
         self, topics, categories, hours, style, max_items, client
     ) -> str:
         """הפקת מבזק עם Claude"""
-        # הכן את הידיעות כטקסט
+        # הכן את הידיעות כטקסט — כולל URL ושעה
         items_text = ""
         for i, t in enumerate(topics, 1):
+            # פרסר זמן
+            pub_time = ""
+            try:
+                pub = datetime.fromisoformat(t['published_at'])
+                pub_time = pub.strftime('%d/%m %H:%M')
+            except Exception:
+                pass
+
             items_text += f"\n{i}. [{t['category']}] {t['title']}"
             if t['summary']:
-                items_text += f"\n   {t['summary'][:200]}"
+                items_text += f"\n   תקציר: {t['summary'][:300]}"
+            items_text += f"\n   קישור: {t['url']}"
+            if pub_time:
+                items_text += f"\n   פורסם: {pub_time}"
             items_text += f"\n   מקורות: {', '.join(t['sources'])} ({t['num_sources']} מקורות)"
             if t['is_exclusive']:
                 items_text += " [בלעדי]"
