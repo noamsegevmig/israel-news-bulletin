@@ -4,3 +4,4 @@ python-dateutil==2.9.0
 beautifulsoup4==4.12.3
 anthropic>=0.40.0
 supabase>=2.0.0
+hdate>=0.10.0
