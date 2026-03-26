@@ -677,14 +677,24 @@ class BulletinGenerator:
         self, topics, categories, hours, style, max_items, client
     ) -> str:
         """הפקת מבזק עם Claude"""
-        # הכן את הידיעות כטקסט — כולל URL ושעה
+        # timezone ישראל
+        try:
+            from zoneinfo import ZoneInfo
+            israel_tz = ZoneInfo('Asia/Jerusalem')
+        except ImportError:
+            israel_tz = timezone(timedelta(hours=3))  # fallback
+
+        # הכן את הידיעות כטקסט — כולל URL ושעה בשעון ישראל
         items_text = ""
         for i, t in enumerate(topics, 1):
-            # פרסר זמן
+            # פרסר זמן והמר לשעון ישראל
             pub_time = ""
             try:
                 pub = datetime.fromisoformat(t['published_at'])
-                pub_time = pub.strftime('%d/%m %H:%M')
+                if pub.tzinfo is None:
+                    pub = pub.replace(tzinfo=timezone.utc)
+                pub_israel = pub.astimezone(israel_tz)
+                pub_time = pub_israel.strftime('%d/%m/%Y %H:%M')
             except Exception:
                 pass
 
@@ -700,18 +710,32 @@ class BulletinGenerator:
             items_text += "\n"
 
         cat_str = ', '.join(categories) if categories else 'הכל'
+
+        # תאריך היום בשעון ישראל + תאריך עברי
+        try:
+            from zoneinfo import ZoneInfo
+            now_israel = datetime.now(ZoneInfo('Asia/Jerusalem'))
+        except ImportError:
+            now_israel = datetime.now(timezone(timedelta(hours=3)))
+        today_greg = now_israel.strftime('%d/%m/%Y')
+
+        # תאריך עברי
+        hebrew_date = self._get_hebrew_date(now_israel)
+        today_date = f"{today_greg} | {hebrew_date}" if hebrew_date else today_greg
+
         prompt = config.BULLETIN_PROMPT.format(
             style=style,
             max_items=max_items,
             categories=cat_str,
             hours=hours,
             news_items=items_text,
+            today_date=today_date,
         )
 
         try:
             response = client.messages.create(
                 model=config.BULLETIN_MODEL,
-                max_tokens=4000,
+                max_tokens=8000,
                 messages=[{"role": "user", "content": prompt}]
             )
             bulletin = response.content[0].text.strip()
@@ -721,14 +745,32 @@ class BulletinGenerator:
             print(f"  ⚠️  שגיאת Claude: {e}, עובר ל-fallback")
             return self._generate_basic(topics, categories, hours, style)
 
+    def _get_hebrew_date(self, dt: datetime) -> str:
+        """חישוב תאריך עברי (קירוב)"""
+        try:
+            from hdate import HDate
+            h = HDate(dt.date(), hebrew=True)
+            return h.hebrew_date
+        except ImportError:
+            # אם hdate לא מותקן, בקש מ-Claude להוסיף
+            return ""
+
     def _generate_basic(self, topics, categories, hours, style) -> str:
         """הפקת מבזק ללא AI"""
-        now = datetime.now()
+        try:
+            from zoneinfo import ZoneInfo
+            now = datetime.now(ZoneInfo('Asia/Jerusalem'))
+        except ImportError:
+            now = datetime.now(timezone(timedelta(hours=3)))
         cat_str = ', '.join(categories) if categories else 'כללי'
+        hebrew_date = self._get_hebrew_date(now)
+        date_str = now.strftime('%d/%m/%Y %H:%M')
+        if hebrew_date:
+            date_str += f" | {hebrew_date}"
 
         lines = []
         lines.append(f"# 📋 מבזק חדשות — {cat_str}")
-        lines.append(f"**⏰ {hours} שעות אחרונות | {len(topics)} ידיעות | {now.strftime('%d/%m/%Y %H:%M')}**")
+        lines.append(f"**⏰ {hours} שעות אחרונות | {len(topics)} ידיעות | {date_str}**")
         lines.append("")
         lines.append("---")
         lines.append("")
@@ -766,11 +808,18 @@ class BulletinGenerator:
                 title = self._clean_title(t['title'], t['sources'])
                 exclusive_mark = " 🔥" if t['is_exclusive'] else ""
 
-                # פרסר זמן פרסום
+                # פרסר זמן פרסום — המר לשעון ישראל
                 pub_time = ""
                 try:
                     pub = datetime.fromisoformat(t['published_at'])
-                    pub_time = pub.strftime('%H:%M')
+                    if pub.tzinfo is None:
+                        pub = pub.replace(tzinfo=timezone.utc)
+                    try:
+                        from zoneinfo import ZoneInfo
+                        pub_israel = pub.astimezone(ZoneInfo('Asia/Jerusalem'))
+                    except ImportError:
+                        pub_israel = pub.astimezone(timezone(timedelta(hours=3)))
+                    pub_time = pub_israel.strftime('%H:%M')
                 except Exception:
                     pass
 
