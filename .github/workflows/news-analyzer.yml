@@ -1,0 +1,88 @@
+name: 📰 מבזקי חדשות ישראל v2
+
+on:
+  # כל 30 דקות
+  schedule:
+    - cron: '*/30 * * * *'
+  
+  # הרצה ידנית עם פרמטרים
+  workflow_dispatch:
+    inputs:
+      style:
+        description: 'סגנון המבזק'
+        required: false
+        default: 'flash'
+        type: choice
+        options:
+          - flash
+          - brief
+          - detailed
+      hours:
+        description: 'טווח זמן (שעות)'
+        required: false
+        default: '24'
+      max_items:
+        description: 'מקסימום ידיעות'
+        required: false
+        default: '30'
+      categories:
+        description: 'קטגוריות (מופרד ברווחים, ריק = הכל)'
+        required: false
+        default: ''
+
+jobs:
+  collect-and-generate:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Clone repository
+        uses: actions/checkout@v4
+      
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: 📦 Install dependencies
+        run: pip install -r requirements.txt
+      
+      - name: 📡 Run collection only (scheduled)
+        if: github.event_name == 'schedule'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python news_analyzer.py --collect-only
+      
+      - name: 📝 Generate bulletin (manual)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          CATS="${{ github.event.inputs.categories }}"
+          STYLE="${{ github.event.inputs.style }}"
+          HOURS="${{ github.event.inputs.hours }}"
+          MAX="${{ github.event.inputs.max_items }}"
+          
+          CMD="python news_analyzer.py --style $STYLE --hours $HOURS --max $MAX"
+          if [ -n "$CATS" ]; then
+            CMD="$CMD --categories $CATS"
+          fi
+          
+          eval $CMD
+      
+      - name: 📁 Save reports
+        run: |
+          mkdir -p reports
+          mv bulletin_*.md reports/ 2>/dev/null || true
+      
+      - name: 💾 Commit and push
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add reports/ 2>/dev/null || true
+          git diff --staged --quiet || git commit -m "📰 מבזק חדשות - $(date +'%Y-%m-%d %H:%M')"
+          git push || true
